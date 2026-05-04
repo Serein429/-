@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI Chat</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+
+<style>
+:root{
+  --bg:#0b0f19;
+  --panel:#0f172a;
+  --panel-2:#111827;
+  --border:#1f2937;
+  --text:#e5e7eb;
+  --sub:#9ca3af;
+  --accent:#2563eb;
+}
+
+.light{
+  --bg:#f8fafc;
+  --panel:#ffffff;
+  --panel-2:#f1f5f9;
+  --border:#e5e7eb;
+  --text:#0f172a;
+  --sub:#6b7280;
+  --accent:#2563eb;
+}
+
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  font-family:Inter, sans-serif;
+  background:var(--bg);
+  color:var(--text);
+  height:100vh;
+  display:flex;
+}
+
+.sidebar{
+  width:260px;
+  background:var(--panel);
+  border-right:1px solid var(--border);
+  display:flex;
+  flex-direction:column;
+  padding:15px;
+}
+
+.topbar{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin-bottom:10px;
+}
+
+.toggle{
+  cursor:pointer;
+  font-size:12px;
+  padding:6px 8px;
+  border-radius:6px;
+  border:1px solid var(--border);
+}
+
+.new-chat{
+  border:1px solid var(--border);
+  padding:10px;
+  border-radius:8px;
+  cursor:pointer;
+  margin-bottom:15px;
+  text-align:center;
+}
+
+.history{
+  flex:1;
+  overflow:auto;
+}
+
+.history div{
+  padding:8px;
+  border-radius:6px;
+  cursor:pointer;
+  color:var(--sub);
+}
+
+.history div:hover{
+  background:var(--panel-2);
+  color:var(--text);
+}
+
+.main{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+}
+
+.chat{
+  flex:1;
+  overflow:auto;
+  padding:30px 0;
+}
+
+.message{
+  display:flex;
+  padding:20px;
+  gap:15px;
+}
+
+.message.user{
+  background:transparent;
+}
+
+.message.bot{
+  background:var(--panel-2);
+}
+
+.avatar{
+  width:30px;
+  height:30px;
+  border-radius:6px;
+  background:var(--border);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:12px;
+}
+
+.content{
+  max-width:800px;
+  line-height:1.7;
+  font-size:14px;
+  white-space:pre-wrap;
+}
+
+.input-box{
+  padding:20px;
+  border-top:1px solid var(--border);
+}
+
+.input-wrap{
+  max-width:900px;
+  margin:auto;
+  background:var(--panel-2);
+  border:1px solid var(--border);
+  border-radius:12px;
+  display:flex;
+  padding:10px;
+}
+
+textarea{
+  flex:1;
+  background:transparent;
+  border:none;
+  color:var(--text);
+  resize:none;
+  outline:none;
+  font-size:14px;
+}
+
+.send{
+  width:40px;
+  height:40px;
+  border-radius:8px;
+  border:none;
+  background:var(--accent);
+  color:white;
+  cursor:pointer;
+}
+
+.typing{
+  opacity:0.6;
+  font-style:italic;
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="sidebar">
+  <div class="topbar">
+    <div>Chat</div>
+    <div class="toggle" onclick="toggleTheme()">🌓</div>
+  </div>
+
+  <div class="new-chat" onclick="newChat()">+ New Chat</div>
+  <div class="history" id="history"></div>
+</div>
+
+<div class="main">
+  <div class="chat" id="chat"></div>
+
+  <div class="input-box">
+    <div class="input-wrap">
+      <textarea id="input" rows="1" placeholder="Send a message..."></textarea>
+      <button class="send" onclick="send()">➤</button>
+    </div>
+  </div>
+</div>
+<script>
+let chat = document.getElementById('chat');
+
+function toggleTheme(){
+  document.body.classList.toggle('light');
+  localStorage.setItem('theme', document.body.classList.contains('light')?'light':'dark');
+}
+
+(function initTheme(){
+  const saved = localStorage.getItem('theme');
+  if(saved==='light') document.body.classList.add('light');
+})();
+
+function addMessage(role, text, typing=false){
+  const div = document.createElement('div');
+  div.className = 'message '+role;
+
+  div.innerHTML = `
+    <div class="avatar">${role==='user'?'你':'AI'}</div>
+    <div class="content ${typing?'typing':''}">${text}</div>
+  `;
+
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div.querySelector('.content');
+}
+
+async function send(){
+  const input = document.getElementById('input');
+  const text = input.value.trim();
+  if(!text) return;
+
+  addMessage('user', text);
+  input.value='';
+
+  // 创建一个空的 bot 消息元素，用于逐步追加内容
+  const botEl = addMessage('bot', '', false);  // 初始为空，不显示思考中
+  botEl.classList.remove('typing');  // 确保没有加载样式
+
+  try{
+    const res = await fetch('/ask/stream', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({question:text})
+    });
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+
+    while(true){
+      const {done, value} = await reader.read();
+      if(done) break;
+      const chunk = decoder.decode(value);
+      // 将新收到的文本追加到消息框中
+      botEl.innerText += chunk;
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+  }catch(e){
+    botEl.innerText = '❌ 请求失败，请检查后端。';
+    console.error(e);
+  }
+}
+
+function newChat(){
+  chat.innerHTML='';
+}
+
+input.addEventListener('keydown',function(e){
+  if(e.key==='Enter' && !e.shiftKey){
+    e.preventDefault();
+    send();
+  }
+});
+
+</script>
+
+</body>
+</html>
